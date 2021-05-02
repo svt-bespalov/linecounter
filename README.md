@@ -1,4 +1,4 @@
-Implement a program that calcualtes the total number of lines in all files in a given directory. Assume that files found in the given directory are text files.
+Implement a program that calculates the total number of lines in all files in a given directory. Assume that files found in the given directory are text files.
 Usage example:
 
 ./linecounter <path-to-a-directory>
