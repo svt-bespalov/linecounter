@@ -1,88 +1,98 @@
 #include "lineCounter.hpp"
 
-void LineCounter::GetFilesName()
+LineCounter::LineCounter(std::string t_pathToDir)
+    : m_pathToDir(t_pathToDir), m_totalLines(0), m_stopPool(false)
+    {
+        fs::current_path(m_pathToDir);
+        std::cout << "Current path: " << fs::current_path() << std::endl;
+
+        getFilesName();
+        asyncCountLinesNumber();
+        sumLinesNumber();
+    }
+
+void LineCounter::getFilesName()
 {
     for (const auto &entry : fs::directory_iterator(fs::current_path()))
     {
         if (entry.is_regular_file())
         {
-            filesInfo.push_back(File(entry.path().filename()));
+            m_filesInfo.push_back(File(entry.path().filename()));
         }
     }
 
-    this->listIter = filesInfo.begin();
+    m_vectorIter = m_filesInfo.begin();
 }
 
-void LineCounter::CountLinesNumber()
+void LineCounter::countLinesNumber()
 {
-    boost::unique_lock<boost::mutex> lock{this->mutexLineCounter, boost::defer_lock};
-    std::list<File>::iterator iter;
-    std::ifstream fin;
-    std::string line;
+   auto isVectorEnd = [&]() -> bool
+   {
+       boost::unique_lock<boost::mutex> lock{m_mutexLineCounter};
+       return m_vectorIter == m_filesInfo.end();
+   };
 
-    lock.lock();
+   auto getFileInfo = [&]() -> File&
+   {
+       boost::unique_lock<boost::mutex> lock{m_mutexLineCounter};
+       return *(m_vectorIter++);
+   };
 
-    if (this->listIter != this->filesInfo.end())
-    {
-        iter = (this->listIter)++;
-    }
-    else
-    {
-        this->stopPool = true;
-        return;
-    }
+   while (!isVectorEnd())
+   {
+       std::ifstream fin;
+       std::string line;
 
-    lock.unlock();
-    
-    try
-    {
-        fin.open(iter->fileName);
-        if (!fin.is_open())
-        {
-            throw std::runtime_error("Unable open file");
-        }
+       auto &fileInfo = getFileInfo();
 
-        while (std::getline(fin, line))
-        {
-            ++(iter->linesCount);
-        }
+       try
+       {
+           fin.open(fileInfo.m_fileName);
+           if (!fin.is_open())
+           {
+               throw std::runtime_error("Unable open file");
+           }
 
-        fin.close();
-    }
-    catch (const std::runtime_error &exception)
-    {
-        lock.lock();
+           while (std::getline(fin, line))
+           {
+               ++(fileInfo.m_linesCount);
+           }
 
-        std::cerr << "EXCEPTION" << std::endl;
-        std::cerr << "Thread id: " << boost::this_thread::get_id() << std::endl;
-        std::cerr << "File: " << iter->fileName << std::endl;
-        std::cerr << "What: " << exception.what() << std::endl;
+           fin.close();
+       }
+       catch (const std::runtime_error &exception)
+       {
+           boost::unique_lock<boost::mutex> lock{m_mutexLineCounter};
 
-        iter = filesInfo.erase(iter);
+           std::cerr << "EXCEPTION" << std::endl;
+           std::cerr << "Thread id: " << boost::this_thread::get_id() << std::endl;
+           std::cerr << "File: " << fileInfo.m_fileName << std::endl;
+           std::cerr << "What: " << exception.what() << std::endl;
+       }
+   }
 
-        lock.unlock();
-    }
+   m_stopPool = true;
 }
 
-void LineCounter::AsyncCountLinesNumber()
+void LineCounter::asyncCountLinesNumber()
 {
     asio::thread_pool pool(boost::thread::hardware_concurrency());
 
-    while (!this->stopPool)
+    for (size_t i = 0; i < std::min(m_filesInfo.size(), static_cast<size_t>(boost::thread::hardware_concurrency())); ++i)
     {
-        asio::post(pool, [&]() { CountLinesNumber(); });
+        asio::post(pool, [&]() { countLinesNumber(); });
     }
 
     pool.stop();
     pool.join();
 }
 
-void LineCounter::SumLinesNumber()
+void LineCounter::sumLinesNumber()
 {
-    for (File element : this->filesInfo)
+    for (File element : m_filesInfo)
     {
-        this->totalLines += element.linesCount;
+        m_totalLines += element.m_linesCount;
     }
 
-    std::cout << "Total lines: " << this->totalLines << std::endl;
+    std::cout << "Total lines: " << m_totalLines << std::endl;
 }

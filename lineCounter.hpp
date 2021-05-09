@@ -4,7 +4,7 @@
 #include <iostream>
 #include <fstream>
 #include <exception>
-#include <list>
+#include <vector>
 #include <string>
 #include <filesystem>
 
@@ -19,35 +19,31 @@ namespace asio = boost::asio;
 class LineCounter
 {
 public:
-    LineCounter()
-        : totalLines(0), stopPool(false)
-    {
-        this->GetFilesName();
-        this->AsyncCountLinesNumber();
-        this->SumLinesNumber();
-    }
+    LineCounter(std::string t_pathToDir);
 
-    void GetFilesName();
-    void CountLinesNumber();
-    void AsyncCountLinesNumber();
-    void SumLinesNumber();
+    void getFilesName();
+    void asyncCountLinesNumber();
+    void sumLinesNumber();
 
 private:
+    void countLinesNumber();
+
     struct File
     {
-        std::string fileName;
-        std::size_t linesCount;
+        std::string m_fileName;
+        std::size_t m_linesCount;
 
-        File(std::string fileName) : fileName(fileName), linesCount(0) {}
+        File(std::string t_fileName) : m_fileName(t_fileName), m_linesCount(0) {}
     };
 
-    std::size_t totalLines;
+    std::string m_pathToDir;
+    std::size_t m_totalLines;
 
-    std::list<File> filesInfo;
-    std::list<File>::iterator listIter;
+    std::vector<File> m_filesInfo;
+    std::vector<File>::iterator m_vectorIter;
 
-    boost::mutex mutexLineCounter;
-    boost::atomic<bool> stopPool;
+    boost::mutex m_mutexLineCounter;
+    boost::atomic<bool> m_stopPool;
 };
 
 #endif // LINE_COUNTER_HPP
