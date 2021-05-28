@@ -1,98 +1,97 @@
 #include "lineCounter.hpp"
 
-LineCounter::LineCounter(std::string t_pathToDir)
-    : m_pathToDir(t_pathToDir), m_totalLines(0), m_stopPool(false)
-    {
-        fs::current_path(m_pathToDir);
-        std::cout << "Current path: " << fs::current_path() << std::endl;
-
-        getFilesName();
-        asyncCountLinesNumber();
-        sumLinesNumber();
-    }
-
-void LineCounter::getFilesName()
+void getFilesName(fs::path const &pathToDir, std::vector<File> &filesInfo)
 {
-    for (const auto &entry : fs::directory_iterator(fs::current_path()))
+    std::cout << "Current path: " << pathToDir.string() << std::endl;
+
+    for (const auto &entry : fs::directory_iterator(pathToDir))
     {
         if (entry.is_regular_file())
         {
-            m_filesInfo.push_back(File(entry.path().filename()));
+            filesInfo.push_back(File(entry.path()));
         }
     }
-
-    m_vectorIter = m_filesInfo.begin();
 }
 
-void LineCounter::countLinesNumber()
+std::size_t sumLinesNumber(std::vector<File> &filesInfo)
 {
-   auto isVectorEnd = [&]() -> bool
-   {
-       boost::unique_lock<boost::mutex> lock{m_mutexLineCounter};
-       return m_vectorIter == m_filesInfo.end();
-   };
+    std::size_t totalLines = 0;
 
-   auto getFileInfo = [&]() -> File&
-   {
-       boost::unique_lock<boost::mutex> lock{m_mutexLineCounter};
-       return *(m_vectorIter++);
-   };
-
-   while (!isVectorEnd())
-   {
-       std::ifstream fin;
-       std::string line;
-
-       auto &fileInfo = getFileInfo();
-
-       try
-       {
-           fin.open(fileInfo.m_fileName);
-           if (!fin.is_open())
-           {
-               throw std::runtime_error("Unable open file");
-           }
-
-           while (std::getline(fin, line))
-           {
-               ++(fileInfo.m_linesCount);
-           }
-
-           fin.close();
-       }
-       catch (const std::runtime_error &exception)
-       {
-           boost::unique_lock<boost::mutex> lock{m_mutexLineCounter};
-
-           std::cerr << "EXCEPTION" << std::endl;
-           std::cerr << "Thread id: " << boost::this_thread::get_id() << std::endl;
-           std::cerr << "File: " << fileInfo.m_fileName << std::endl;
-           std::cerr << "What: " << exception.what() << std::endl;
-       }
-   }
-
-   m_stopPool = true;
-}
-
-void LineCounter::asyncCountLinesNumber()
-{
-    asio::thread_pool pool(boost::thread::hardware_concurrency());
-
-    for (size_t i = 0; i < std::min(m_filesInfo.size(), static_cast<size_t>(boost::thread::hardware_concurrency())); ++i)
+    for (File element : filesInfo)
     {
-        asio::post(pool, [&]() { countLinesNumber(); });
+        totalLines += element.m_linesCount;
     }
 
-    pool.stop();
-    pool.join();
+    return totalLines;
 }
 
-void LineCounter::sumLinesNumber()
+std::size_t countLines(fs::path const &pathToDir)
 {
-    for (File element : m_filesInfo)
+    std::vector<File> filesInfo;
+    getFilesName(pathToDir, filesInfo);
+    std::vector<File>::iterator vectorIter = filesInfo.begin();
+    
+    std::mutex mutexLineCounter;
+    asio::thread_pool threadPool(std::thread::hardware_concurrency());
+
+    for (size_t i = 0; i < std::min(filesInfo.size(), static_cast<size_t>(std::thread::hardware_concurrency())); ++i)
     {
-        m_totalLines += element.m_linesCount;
+        asio::post(threadPool, [&]()
+        {
+            auto isVectorEnd = [&]() -> bool
+            {
+                std::unique_lock<std::mutex> lock{mutexLineCounter};
+                return vectorIter == filesInfo.end();
+            };
+
+            auto getFileInfo = [&]() -> File&
+            {
+                std::unique_lock<std::mutex> lock{mutexLineCounter};
+                return *(vectorIter++);
+            };
+
+            while (!isVectorEnd())
+            {
+                std::ifstream fin;
+                std::string line;
+
+                auto &fileInfo = getFileInfo();
+
+                try
+                {
+                    fin.open(fileInfo.m_pathToFile.string());
+                    if (!fin.is_open())
+                    {
+                        throw std::runtime_error("Unable open file");
+                    }
+
+                    while (std::getline(fin, line))
+                    {
+                        ++(fileInfo.m_linesCount);
+                    }
+
+                    fin.close();
+                }
+                catch (const std::runtime_error &exception)
+                {
+                    std::unique_lock<std::mutex> lock{mutexLineCounter};
+
+                    std::cerr << "EXCEPTION" << std::endl;
+                    std::cerr << "Thread id: " << std::this_thread::get_id() << std::endl;
+                    std::cerr << "File: " << fileInfo.m_pathToFile << std::endl;
+                    std::cerr << "What: " << exception.what() << std::endl;
+                }
+            }
+        });
     }
 
-    std::cout << "Total lines: " << m_totalLines << std::endl;
+    threadPool.join();
+    std::size_t totalLines = sumLinesNumber(filesInfo);
+
+    return totalLines;
+}
+
+std::future<std::size_t> asyncCountLines(fs::path const &pathToDir)
+{
+   return std::async(countLines, std::ref(pathToDir));
 }

@@ -7,43 +7,25 @@
 #include <vector>
 #include <string>
 #include <filesystem>
+#include <future>
+#include <thread>
 
-#include <boost/thread.hpp>
 #include <boost/asio/thread_pool.hpp>
 #include <boost/asio/post.hpp>
-#include <boost/atomic/atomic.hpp>
 
 namespace fs = std::filesystem;
 namespace asio = boost::asio;
-
-class LineCounter
+struct File
 {
-public:
-    LineCounter(std::string t_pathToDir);
+    fs::path m_pathToFile;
+    std::size_t m_linesCount;
 
-    void getFilesName();
-    void asyncCountLinesNumber();
-    void sumLinesNumber();
-
-private:
-    void countLinesNumber();
-
-    struct File
-    {
-        std::string m_fileName;
-        std::size_t m_linesCount;
-
-        File(std::string t_fileName) : m_fileName(t_fileName), m_linesCount(0) {}
-    };
-
-    std::string m_pathToDir;
-    std::size_t m_totalLines;
-
-    std::vector<File> m_filesInfo;
-    std::vector<File>::iterator m_vectorIter;
-
-    boost::mutex m_mutexLineCounter;
-    boost::atomic<bool> m_stopPool;
+    File(fs::path t_pathToFile) : m_pathToFile(t_pathToFile), m_linesCount(0) {}
 };
+
+void getFilesName(fs::path const &pathToDir);
+std::size_t sumLinesNumber(std::vector<File> &filesInfo);
+std::size_t countLines(fs::path const &pathToDir);
+std::future<std::size_t> asyncCountLines(fs::path const &pathToDir);
 
 #endif // LINE_COUNTER_HPP

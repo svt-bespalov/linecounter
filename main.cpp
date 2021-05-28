@@ -25,10 +25,10 @@ int main(int argc, char **argv)
     po::variables_map::iterator varsMapIter;
     varsMapIter = varsMap.find("path");
 
-    std::string pathToDir;
+    fs::path pathToDir;
     if (varsMapIter != varsMap.end())
     {
-        pathToDir = fs::path(varsMapIter->second.as<std::string>());
+        pathToDir = varsMapIter->second.as<std::string>();
     }
     else
     {
@@ -41,7 +41,12 @@ int main(int argc, char **argv)
         showHelp();
     }
 
-    LineCounter lineCounter(pathToDir);
+    auto futureCountLines = asyncCountLines(pathToDir);
+
+    // Do something else
+
+    auto totalLines = futureCountLines.get();
+    std::cout << "Total lines: " << totalLines << std::endl;
 
     return 0;
 }
