@@ -1,5 +1,5 @@
 CXX = g++
-CFLAGS = -g -Wall -std=c++17
+CFLAGS = -g -Wall -std=c++20
 LIBS = -lpthread -lboost_program_options -lboost_thread
 SRCS = lineCounter.cpp main.cpp
 PROGRAM = lineCounter

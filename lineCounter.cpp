@@ -25,16 +25,18 @@ std::size_t sumLinesNumber(std::vector<File> &filesInfo)
     return totalLines;
 }
 
-std::size_t countLines(fs::path const &pathToDir)
+std::size_t countLines(fs::path const &pathToDir, asio::thread_pool &threadPool)
 {
     std::vector<File> filesInfo;
     getFilesName(pathToDir, filesInfo);
     std::vector<File>::iterator vectorIter = filesInfo.begin();
     
     std::mutex mutexLineCounter;
-    asio::thread_pool threadPool(std::thread::hardware_concurrency());
 
-    for (size_t i = 0; i < std::min(filesInfo.size(), static_cast<size_t>(std::thread::hardware_concurrency())); ++i)
+    std::size_t tasksNumber = std::min(filesInfo.size(), static_cast<size_t>(std::thread::hardware_concurrency()));
+    std::latch latches(tasksNumber);
+
+    for (size_t i = 0; i < tasksNumber ; ++i)
     {
         asio::post(threadPool, [&]()
         {
@@ -82,16 +84,18 @@ std::size_t countLines(fs::path const &pathToDir)
                     std::cerr << "What: " << exception.what() << std::endl;
                 }
             }
+
+            latches.count_down();
         });
     }
 
-    threadPool.join();
+    latches.wait();
     std::size_t totalLines = sumLinesNumber(filesInfo);
 
     return totalLines;
 }
 
-std::future<std::size_t> asyncCountLines(fs::path const &pathToDir)
+std::future<std::size_t> asyncCountLines(fs::path const &pathToDir, asio::thread_pool &threadPool)
 {
-   return std::async(countLines, std::ref(pathToDir));
+   return std::async(countLines, std::ref(pathToDir), std::ref(threadPool));
 }

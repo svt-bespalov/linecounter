@@ -41,12 +41,15 @@ int main(int argc, char **argv)
         showHelp();
     }
 
-    auto futureCountLines = asyncCountLines(pathToDir);
+    asio::thread_pool threadPool(std::thread::hardware_concurrency());
+
+    auto futureCountLines = asyncCountLines(pathToDir, threadPool);
 
     // Do something else
 
     auto totalLines = futureCountLines.get();
     std::cout << "Total lines: " << totalLines << std::endl;
 
+    threadPool.join();
     return 0;
 }
