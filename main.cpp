@@ -1,9 +1,17 @@
+#include <iostream>
 #include <functional>
 #include <boost/program_options.hpp>
 
 #include "lineCounter.hpp"
 
 namespace po = boost::program_options;
+
+void errorFunc(fs::path const &pathToDir, std::error_code errorCode)
+{
+    std::cerr << "EXCEPTION" << std::endl;
+    std::cerr << "File: " << pathToDir.string() << std::endl;
+    std::cerr << "What: " << errorCode.message() << std::endl;
+}
 
 int main(int argc, char **argv)
 {
@@ -43,7 +51,7 @@ int main(int argc, char **argv)
 
     asio::thread_pool threadPool(std::thread::hardware_concurrency());
 
-    auto futureCountLines = asyncCountLines(pathToDir, threadPool);
+    auto futureCountLines = asyncCountLines(pathToDir, threadPool, errorFunc);
 
     // Do something else
 
