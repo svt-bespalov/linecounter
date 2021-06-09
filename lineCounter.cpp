@@ -1,10 +1,10 @@
 #include <iostream>
+
 #include <fstream>
 #include <exception>
 #include <vector>
 #include <string>
 #include <thread>
-#include <latch>
 #include <utility>
 #include <boost/asio/post.hpp>
 
@@ -20,23 +20,31 @@ namespace
         File(fs::path t_pathToFile) : m_pathToFile(t_pathToFile), m_linesCount(0) {}
     };
 
-    std::vector<File> getFilesName(fs::path const &pathToDir)
+    std::vector<File> GetFilesName(const fs::path &pathToDir, std::mutex &mutexLineCounter, errorFuncType &errorFunc)
     {
         std::vector<File> filesInfo;
-        std::cout << "Current path: " << pathToDir.string() << std::endl;
 
-        for (const auto &entry : fs::directory_iterator(pathToDir))
+        try
         {
-            if (entry.is_regular_file())
+            for (const auto &entry : fs::directory_iterator(pathToDir))
             {
-                filesInfo.emplace_back(File(entry.path()));
+                if (entry.is_regular_file())
+                {
+                    filesInfo.emplace_back(File(entry.path()));
+                }
             }
+
+        }
+        catch(const std::system_error &except)
+        {
+            std::unique_lock<std::mutex> lock(mutexLineCounter);
+            errorFunc(pathToDir, except.code());
         }
 
         return filesInfo;
     }
 
-    std::size_t sumLinesNumber(std::vector<File> &filesInfo)
+    std::size_t SumLinesNumber(std::vector<File> &filesInfo)
     {
         std::size_t totalLines = 0;
 
@@ -48,17 +56,17 @@ namespace
         return totalLines;
     }
 
-    void countLines(std::vector<File> &filesInfo, std::vector<File>::iterator &vectorIter, std::mutex &mutexLineCounter, errorFuncType &errorFunc)
+    void CountLines(std::vector<File> &filesInfo, std::vector<File>::iterator &vectorIter, std::mutex &mutexLineCounter, errorFuncType &errorFunc)
     {
         auto isVectorEnd = [&]() -> bool
         {
-            std::unique_lock<std::mutex> lock{mutexLineCounter};
+            std::unique_lock<std::mutex> lock(mutexLineCounter);
             return vectorIter == filesInfo.end();
         };
 
         auto getFileInfo = [&]() -> File&
         {
-            std::unique_lock<std::mutex> lock{mutexLineCounter};
+            std::unique_lock<std::mutex> lock(mutexLineCounter);
             return *(vectorIter++);
         };
 
@@ -74,7 +82,7 @@ namespace
                 fin.open(fileInfo.m_pathToFile.string());
                 if (!fin.is_open())
                 {
-                    throw ENOENT;
+                    throw std::system_error(std::make_error_code(std::errc::no_such_file_or_directory));
                 }
 
                 while (std::getline(fin, line))
@@ -84,16 +92,16 @@ namespace
 
                 fin.close();
             }
-            catch (int errCode)
+            catch (const std::system_error &except)
             {
-                std::unique_lock<std::mutex> lock{mutexLineCounter};
-                errorFunc(fileInfo.m_pathToFile, std::error_code(errCode, std::generic_category()));
+                std::unique_lock<std::mutex> lock(mutexLineCounter);
+                errorFunc(fileInfo.m_pathToFile, except.code());
             }
         }
     }
 }
 
-std::future<std::size_t> asyncCountLines(fs::path const &pathToDir, asio::thread_pool &threadPool, errorFuncType errorFunc)
+std::future<std::size_t> AsyncCountLines(const fs::path &pathToDir, asio::thread_pool &threadPool, errorFuncType errorFunc)
 {
     std::promise<std::size_t> promiseCountLines;
     std::future<std::size_t> futureCountLines = promiseCountLines.get_future();
@@ -101,24 +109,32 @@ std::future<std::size_t> asyncCountLines(fs::path const &pathToDir, asio::thread
     asio::post(threadPool, [&pathToDir, &threadPool, promiseCountLines = std::move(promiseCountLines), &errorFunc]() mutable
     {
         std::mutex mutexLineCounter;
-        auto filesInfo = getFilesName(pathToDir);
+        std::condition_variable conditionVar;
+
+        auto filesInfo = GetFilesName(pathToDir, mutexLineCounter, errorFunc);
         auto vectorIter = filesInfo.begin();
         
-        std::size_t tasksNumber = std::min(filesInfo.size(), static_cast<size_t>(std::thread::hardware_concurrency()));
-        std::latch latches(tasksNumber);
+        const std::size_t tasksNumber = std::min(filesInfo.size(), static_cast<size_t>(std::thread::hardware_concurrency()));
+        std::size_t tasksCount = tasksNumber;
 
         for (size_t i = 0; i < tasksNumber; ++i)
         {
             asio::post(threadPool, [&]()
             {
-                countLines(filesInfo, vectorIter, mutexLineCounter, errorFunc);
-                latches.count_down();
+                CountLines(filesInfo, vectorIter, mutexLineCounter, errorFunc);
+
+                std::unique_lock<std::mutex> lock(mutexLineCounter);
+                if (--tasksCount == 0)
+                {
+                    conditionVar.notify_one();
+                }
             });
         }
 
-        latches.wait();
+        std::unique_lock<std::mutex> lock(mutexLineCounter);
+        conditionVar.wait(lock, [&]() { return tasksCount == 0; });
 
-        promiseCountLines.set_value(sumLinesNumber(filesInfo));
+        promiseCountLines.set_value(SumLinesNumber(filesInfo));
     });
 
 
